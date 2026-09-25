@@ -2,6 +2,8 @@
 
 每份黄金样本对应一个确定版本的原始招标文件。使用 `gold_sample.template.json` 复制创建标注文件，不要把未完成的模板用于计算指标。
 
+样本原件放入 `evaluation/samples/`，黄金标注放入 `evaluation/gold/`，预测 JSON 放入 `evaluation/predictions/`，报告放入 `evaluation/reports/`。这些目录已加入 `.gitignore`，默认不会提交到公开仓库。
+
 ## 标注步骤
 
 1. 对原始文件计算 SHA-256；值必须与预测结果 `analysis.document.sha256` 完全一致，否则评测器拒绝比较。
@@ -41,7 +43,7 @@
 从分析 API 保存的响应 JSON 直接评估：
 
 ```powershell
-python scripts/evaluate_gold.py --gold evaluation/gold_doc_001.json --prediction evaluation/prediction_doc_001.json --output evaluation/report_doc_001.json
+python scripts/evaluate_gold.py --gold evaluation/gold/gold_doc_001.json --prediction evaluation/predictions/prediction_doc_001.json --output evaluation/reports/report_doc_001.json
 ```
 
 报告包含字段精确准确率、评分项 precision/recall/F1、匹配项类别与最高分准确率、证据页码/原文准确率，以及提供 bbox 标注时 IoU≥0.5 的定位准确率。评分项匹配按页码约束（若提供页码）和字符 bigram Dice 阈值进行一对一匹配；该策略用于建立第一版基线，需人工检查 `criterion_matches` 和未匹配列表，不能把自动匹配结果视为黄金标注真值。
@@ -49,7 +51,7 @@ python scripts/evaluate_gold.py --gold evaluation/gold_doc_001.json --prediction
 准备多个项目的评测集时，复制 `manifest.template.json`，每个样本分别指向完整人工黄金标注和对应 API 预测 JSON：
 
 ```powershell
-python scripts/evaluate_corpus.py --manifest evaluation/manifest.json --output evaluation/corpus_report.json
+python scripts/evaluate_corpus.py --manifest evaluation/manifest.json --output evaluation/reports/corpus_report.json
 ```
 
 汇总器会检查同一 `project_id` 不得同时出现在 development 与 blind_test，并输出总体 micro 指标、按划分统计和按文件类型统计。建议先用 development 样本调规则；冻结版本后再一次性跑 blind_test。

@@ -5,8 +5,8 @@
       "project_id": "project-001",
       "split": "development",
       "format": "docx",
-      "gold": "gold_project_001.json",
-      "prediction": "prediction_project_001.json"
+      "gold": "gold/gold_project_001.json",
+      "prediction": "predictions/prediction_project_001.json"
     }
   ]
 }
