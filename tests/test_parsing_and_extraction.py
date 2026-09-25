@@ -72,6 +72,37 @@ def test_project_field_candidate_carries_exact_source_evidence():
     assert fields["project_title"].raw_value == "城市供水设施改造工程"
     assert fields["project_title"].evidence[0].quote == blocks[0]["text"]
     assert fields["project_title"].evidence[0].page_no == 2
+    assert "Inupedia/tender-extract" in fields["project_title"].review_reason
+
+
+def test_vendored_tender_extract_patterns_add_a_project_number_candidate():
+    blocks = [
+        {"block_id": "b-name", "kind": "paragraph", "text": "项目名称：城市供水设施改造工程",
+         "page_no": None, "bbox": None, "section_path": [], "source_index": 0},
+        {"block_id": "b-id", "kind": "paragraph", "text": "招标编号：ZB-2026-015",
+         "page_no": None, "bbox": None, "section_path": [], "source_index": 1},
+    ]
+
+    fields = {item.field: item for item in extract_fields(blocks, "doc-oss")}
+
+    assert fields["project_title"].raw_value == "城市供水设施改造工程"
+    assert fields["project_number"].raw_value == "ZB-2026-015"
+    assert fields["project_number"].evidence[0].block_id == "b-id"
+
+
+def test_vendored_amount_normalization_is_only_mapped_with_explicit_tender_label():
+    blocks = [
+        {"block_id": "b-price", "kind": "paragraph", "text": "最高投标限价：500万元",
+         "page_no": 2, "bbox": [10, 20, 160, 40], "section_path": [], "source_index": 0},
+        {"block_id": "b-unlabeled", "kind": "paragraph", "text": "本项目服务费用约500万元",
+         "page_no": 3, "bbox": [10, 20, 160, 40], "section_path": [], "source_index": 1},
+    ]
+
+    fields = {item.field: item for item in extract_fields(blocks, "doc-price")}
+
+    assert fields["price_limit"].raw_value == "500万元"
+    assert fields["price_limit"].normalized_value == "5000000.00"
+    assert fields["price_limit"].evidence[0].block_id == "b-price"
 
 
 def test_evidence_validation_rejects_forged_page_or_block_quote():

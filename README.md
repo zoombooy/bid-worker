@@ -18,6 +18,8 @@ python -m uvicorn bidreader.app:app --app-dir src --host 127.0.0.1 --port 8000
 
 如要启用 OpenAI 兼容模型的评分条目辅助分类，配置 `LLM_BASE_URL`、`LLM_API_KEY` 和 `LLM_MODEL`。系统只应用可在候选原文中验证的类别判断，失败时保留规则结果。原文证据仍须人工确认。
 
+项目名称和项目编号候选使用了 [Inupedia/tender-extract](https://github.com/Inupedia/tender-extract) 的 MIT 许可增强规则和抽取引擎，并映射回本系统解析出的原文块。复用文件、上游 revision 和适配范围见 [第三方来源说明](src/bidreader/vendor/tender_extract/NOTICE.md)；上游 MIT License 随 vendored 代码保留。评分项抽取当前仍使用本项目的候选规则，后续将依据本地金标准评估决定接入哪些上游方法。
+
 扫描 PDF 默认尝试本机 OCR。安装 OCR 适配包：
 
 ```powershell

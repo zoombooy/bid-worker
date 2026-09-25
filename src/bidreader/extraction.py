@@ -1,5 +1,6 @@
 import json
 import re
+from functools import lru_cache
 from typing import Any
 from uuid import uuid4
 
@@ -7,6 +8,7 @@ import httpx
 
 from bidreader.config import get_settings
 from bidreader.schemas import AnalysisResult, Criterion, Evidence, ProjectField, ReviewState
+from bidreader.vendor.tender_extract.extraction_engine import ExtractionEngine
 
 FIELD_RULES: list[tuple[str, re.Pattern[str]]] = [
     ("project_title", re.compile(r"(?:招标|采购|建设|工程)?项目名称\s*[：:]\s*(.+)")),
@@ -34,8 +36,76 @@ def _block_evidence(document_id: str, block: dict[str, Any], quote: str | None =
     )
 
 
+@lru_cache(maxsize=1)
+def _upstream_engine() -> ExtractionEngine:
+    return ExtractionEngine()
+
+
+def _upstream_project_fields(blocks: list[dict], document_id: str) -> dict[str, ProjectField]:
+    """Run MIT-licensed tender-extract patterns and bind their spans to our source blocks."""
+    searchable = [block for block in blocks if block.get("kind") not in {"word", "table_cell"}]
+    offsets: list[tuple[int, int, dict]] = []
+    parts: list[str] = []
+    cursor = 0
+    for block in searchable:
+        text = block.get("text", "").strip()
+        if not text:
+            continue
+        if parts:
+            cursor += 1
+            parts.append("\n")
+        start = cursor
+        parts.append(text)
+        cursor += len(text)
+        offsets.append((start, cursor, block))
+    content = "".join(parts)
+    extracted = _upstream_engine().extract_all_fields(
+        content, ["project_name", "project_number", "bid_amount"]
+    )
+    mapping = {"project_name": "project_title", "project_number": "project_number"}
+    candidates: dict[str, ProjectField] = {}
+    for upstream_name in ("project_name", "project_number", "bid_amount"):
+        upstream_field = extracted.get(upstream_name)
+        if not upstream_field or not upstream_field.values:
+            continue
+        spans = sorted(upstream_field.values, key=lambda item: item.confidence, reverse=True)
+        for span in spans:
+            value = span.value.strip()
+            block = next((item for start, end, item in offsets
+                          if start <= span.start < end and value in item.get("text", "")), None)
+            if block is None:
+                block = next((item for _, _, item in offsets if value and value in item.get("text", "")), None)
+            if block is None:
+                continue
+            field_name = mapping.get(upstream_name)
+            if upstream_name == "bid_amount":
+                block_text = block.get("text", "")
+                limit_label = re.search(r"最高投标限价|最高限价|招标控制价|拦标价", block_text)
+                budget_label = re.search(r"项目预算|预算金额", block_text)
+                if bool(limit_label) == bool(budget_label):
+                    continue
+                field_name = "price_limit" if limit_label else "project_budget"
+            if field_name is None:
+                continue
+            alternatives = list(dict.fromkeys(item.value for item in spans))
+            reason = "由 Inupedia/tender-extract 的增强规则抽取；必须核对原文证据。"
+            if len(alternatives) > 1:
+                reason += f" 检测到多个不同候选：{'；'.join(alternatives)}。"
+            candidates[field_name] = ProjectField(
+                field=field_name,
+                raw_value=value,
+                normalized_value=span.normalized_value,
+                state="candidate",
+                confidence=span.confidence,
+                evidence=[_block_evidence(document_id, block)],
+                review_reason=reason,
+            )
+            break
+    return candidates
+
+
 def extract_fields(blocks: list[dict], document_id: str) -> list[ProjectField]:
-    found: dict[str, ProjectField] = {}
+    found: dict[str, ProjectField] = _upstream_project_fields(blocks, document_id)
     for block in blocks:
         if block.get("kind") in {"word"}:
             continue
