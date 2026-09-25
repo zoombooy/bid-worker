@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#f4f6f8" />
+  <title>标书解析工作台</title>
+  <style>
+    :root { color-scheme: light; --ink:#17231e; --muted:#68756f; --line:#e2e8e4; --paper:#fff; --canvas:#f4f6f5; --green:#187451; --mint:#e8f4ee; --amber:#fff4df; --red:#a7443d; font-family:Inter,"Microsoft YaHei UI","Microsoft YaHei",sans-serif }
+    * { box-sizing:border-box } body { margin:0; background:var(--canvas); color:var(--ink) }
+    header { height:66px; display:flex; align-items:center; justify-content:space-between; padding:0 34px; background:#fff; border-bottom:1px solid var(--line) }
+    .brand { display:flex; align-items:center; gap:11px; font-size:17px; font-weight:700; letter-spacing:.01em }
+    .brand-mark { width:31px;height:31px;border-radius:9px;background:var(--green);color:white;display:grid;place-items:center;font-size:17px }
+    .top-label { color:var(--muted);font-size:12px }
+    main { max-width:1180px; margin:34px auto; padding:0 22px 60px }
+    .intro { display:flex; justify-content:space-between; align-items:flex-end; gap:20px; margin-bottom:24px }
+    h1 { font-size:25px; margin:0 0 8px; letter-spacing:-.02em } .subtitle { color:var(--muted);font-size:14px }
+    .badge { display:inline-flex;align-items:center;gap:7px;padding:8px 11px;border:1px solid #dbe8e0;border-radius:99px;background:#f8fcf9;font-size:12px;color:#34654e }
+    .dot { width:7px;height:7px;border-radius:50%;background:#35a26f }
+    .grid { display:grid;grid-template-columns:340px minmax(0,1fr);gap:18px;align-items:start }
+    .card { background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:0 2px 10px #12251a08 }
+    .card-head { padding:18px 20px 14px; border-bottom:1px solid var(--line); display:flex;justify-content:space-between;align-items:center }
+    .card-head h2 { font-size:15px; margin:0 } .card-body { padding:18px 20px }
+    .drop { min-height:164px;border:1px dashed #aebeb4;border-radius:11px;background:#fbfdfb;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:18px;transition:.15s }
+    .drop.drag { border-color:var(--green);background:var(--mint) }
+    .upload-icon { color:var(--green);font-size:25px;margin-bottom:8px }
+    .drop strong { font-size:14px }.drop small { margin-top:8px;color:var(--muted);font-size:12px;line-height:1.6 }
+    button,.button { font:inherit;cursor:pointer;border:0;border-radius:8px;padding:10px 13px;background:var(--green);color:#fff;font-weight:650;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;justify-content:center }
+    button:disabled { opacity:.5;cursor:wait }.button.secondary,button.secondary { color:#315744;background:#edf5ef }
+    .upload-actions { display:flex;gap:8px;margin-top:13px }
+    .hint { color:var(--muted);font-size:12px;line-height:1.7;margin:15px 0 0 }
+    .runs { margin-top:17px }.runs h3 { margin:0 0 9px;font-size:12px;color:var(--muted);font-weight:650 }
+    .run-item { width:100%;display:flex;flex-direction:column;align-items:flex-start;gap:5px;color:var(--ink);background:#fff;border:1px solid var(--line);margin:7px 0;text-align:left }
+    .run-item.active { border-color:#72ae8f;background:#f5faf6 }.run-title { font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:270px }.run-meta { font-size:11px;color:var(--muted) }
+    .section-title { display:flex;align-items:center;gap:9px }.counter { display:inline-grid;place-items:center;min-width:22px;height:22px;border-radius:99px;background:#edf1ee;color:#617068;font-size:11px;padding:0 6px }
+    #workspace { min-height:400px }.empty { min-height:380px;display:grid;place-items:center;text-align:center;color:var(--muted);padding:35px }.empty-icon { font-size:35px;opacity:.45;margin-bottom:12px }
+    .progress { height:6px;background:#e9eeeb;border-radius:9px;overflow:hidden;margin-top:12px }.progress span { display:block;height:100%;width:20%;background:#43a179;transition:.4s }
+    .message { padding:10px 12px;border-radius:9px;background:#f5f8f6;color:#54645b;font-size:12px;margin:8px 0 }
+    .warning { padding:11px 13px;border-radius:9px;background:var(--amber);color:#795516;font-size:12px;line-height:1.6;margin:10px 0 }
+    .tabs { display:flex;gap:5px;padding:5px;background:#f2f5f3;border-radius:9px;margin-bottom:15px;width:max-content }
+    .tab { background:transparent;color:#627169;padding:8px 11px;font-weight:600 }.tab.active { color:#194632;background:#fff;box-shadow:0 1px 4px #10251a16 }
+    .field-row,.criterion { border:1px solid var(--line);border-radius:10px;padding:14px;margin:10px 0 }
+    .field-top,.criterion-top { display:flex;justify-content:space-between;gap:12px;align-items:flex-start }
+    .field-label { color:var(--muted);font-size:11px;margin-bottom:5px }.field-value { font-size:14px;font-weight:650;line-height:1.55;word-break:break-word }
+    .pill { border-radius:99px;background:#f1f3f2;padding:5px 8px;color:#59675f;font-size:10px;white-space:nowrap }.pill.pending { background:#fff3dc;color:#95651b }.pill.confirmed { background:#e9f5ec;color:#2b754f }
+    .criterion-text { font-size:13px;line-height:1.7;margin:10px 0;color:#293630;white-space:pre-wrap }
+    .criterion-meta { display:flex;flex-wrap:wrap;gap:6px }.criterion-meta span { font-size:10px;padding:4px 7px;background:#f2f5f3;border-radius:6px;color:#53625a }
+    .evidence { border-left:2px solid #78ad8e;padding:8px 10px;background:#f7faf8;border-radius:0 7px 7px 0;margin-top:9px;font-size:11px;line-height:1.6;color:#5b6961 }
+    .review-controls { display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:10px }
+    .review-controls input,.review-controls select { border:1px solid var(--line);border-radius:7px;padding:8px;font:inherit;font-size:12px;max-width:135px }
+    textarea[data-source-text] { display:block;width:100%;min-height:72px;margin-top:8px;border:1px solid var(--line);border-radius:7px;padding:9px;font:inherit;font-size:12px;line-height:1.6;resize:vertical }
+    select[data-evidence-select] { max-width:100%;min-width:220px }
+    .review-controls button { padding:8px 10px;font-size:11px }.review-controls .secondary { background:#edf1ef;color:#44554b }
+    .result-head { display:flex;justify-content:space-between;align-items:center;margin:0 0 10px }.result-head h3 { font-size:13px;margin:0 }
+    .source-link { color:var(--green);font-size:11px;text-decoration:none }.source-link:hover{text-decoration:underline}
+    @media(max-width:850px){main{margin-top:22px}.grid{grid-template-columns:1fr}.intro{align-items:flex-start;flex-direction:column}header{padding:0 19px}}
+  </style>
+</head>
+<body>
+  <header><div class="brand"><span class="brand-mark">标</span><span>标书解析工作台</span></div><span class="top-label">工程及技术服务 · 一期</span></header>
+  <main>
+    <div class="intro"><div><h1>招标文件解析</h1><div class="subtitle">结构化读取项目信息和评分标准，并逐项回到原文核对。</div></div><div class="badge"><span class="dot"></span>证据优先 · 人工确认后生效</div></div>
+    <div class="grid">
+      <aside>
+        <section class="card"><div class="card-head"><h2>上传招标文件</h2></div><div class="card-body">
+          <div id="drop" class="drop"><div class="upload-icon">⇧</div><strong>拖放文件到这里</strong><small>支持 DOCX、PDF、TXT、Markdown<br>单文件最大 100 MB</small></div>
+          <input id="file" type="file" accept=".docx,.pdf,.txt,.md" hidden />
+          <div class="upload-actions"><button id="choose" class="secondary">选择文件</button><button id="upload" disabled>开始解析</button></div>
+          <div class="hint">原始文件保存在本地工作区。扫描 PDF 当前需接入 OCR 后才能自动解析；系统会明确标记待复核。</div>
+          <div class="runs"><h3>最近任务</h3><div id="run-list"><div class="run-meta">尚无任务</div></div></div>
+        </div></section>
+      </aside>
+      <section id="workspace" class="card"><div class="empty"><div><div class="empty-icon">▤</div><strong>上传文件开始解析</strong><div class="hint">项目字段、技术/商务评分项和证据位置将在这里显示。</div></div></div></section>
+    </div>
+  </main>
+  <script>
+    const $ = (selector) => document.querySelector(selector);
+    const state = { file: null, runId: null, tenderId: null, tab: "fields", timer: null };
+    const labels = {project_title:"项目名称",project_number:"项目编号",submission_deadline:"投标截止时间",opening_time:"开标时间",project_budget:"项目预算",price_limit:"最高限价",duration:"工期 / 服务期限"};
+    const statusLabel = {queued:"排队中",running:"处理中",needs_review:"待复核",completed:"已确认",failed:"处理失败"};
+    const html = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    const fieldStatus = (field) => field.review_state === "confirmed" ? "已确认" : field.state === "not_found" ? "未发现" : "待确认";
+    function setFile(file) { if(!file) return; state.file=file; $("#upload").disabled=false; $("#drop").innerHTML=`<div class="upload-icon">✓</div><strong>${html(file.name)}</strong><small>${(file.size/1024/1024).toFixed(2)} MB · 点击“开始解析”上传</small>`; }
+    $("#choose").onclick=()=>$("#file").click(); $("#file").onchange=e=>setFile(e.target.files[0]);
+    const drop=$("#drop"); drop.ondragover=e=>{e.preventDefault();drop.classList.add("drag")}; drop.ondragleave=()=>drop.classList.remove("drag"); drop.ondrop=e=>{e.preventDefault();drop.classList.remove("drag");setFile(e.dataTransfer.files[0])};
+    $("#upload").onclick=async()=>{if(!state.file)return;$("#upload").disabled=true;$("#workspace").innerHTML=`<div class="card-head"><h2>正在创建解析任务</h2></div><div class="card-body"><div class="message">${html(state.file.name)}</div><div class="progress"><span></span></div></div>`;try{const data=new FormData();data.append("file",state.file);const response=await fetch("/api/v1/tenders",{method:"POST",body:data});if(!response.ok)throw new Error((await response.json()).detail||"上传失败");const result=await response.json();state.tenderId=result.tender_id;state.runId=result.run_id;remember(state.tenderId,state.runId,state.file.name);renderRuns();await load();poll();}catch(error){$("#workspace").innerHTML=`<div class="warning">${html(error.message)}</div>`;$("#upload").disabled=false}};
+    function remember(tender,run,name){const list=JSON.parse(localStorage.getItem("bidreader-runs")||"[]").filter(x=>x.run!==run);list.unshift({tender,run,name});localStorage.setItem("bidreader-runs",JSON.stringify(list.slice(0,12)))}
+    function renderRuns(){const list=JSON.parse(localStorage.getItem("bidreader-runs")||"[]");$("#run-list").innerHTML=list.length?list.map(x=>`<button class="run-item ${x.run===state.runId?"active":""}" data-run="${html(x.run)}" data-tender="${html(x.tender)}"><span class="run-title">${html(x.name)}</span><span class="run-meta">${html(x.run.slice(0,8))} · 查看任务</span></button>`).join(""):`<div class="run-meta">尚无任务</div>`;document.querySelectorAll(".run-item").forEach(b=>b.onclick=()=>{state.runId=b.dataset.run;state.tenderId=b.dataset.tender;renderRuns();load();poll()})}
+    function poll(){clearTimeout(state.timer);state.timer=setTimeout(async()=>{await load();if(state.status==="queued"||state.status==="running")poll()},1800)}
+    async function load(){if(!state.runId)return;try{const [runRes,resultRes]=await Promise.all([fetch(`/api/v1/runs/${state.runId}`),fetch(`/api/v1/tenders/${state.tenderId}/analysis?run_id=${state.runId}`)]);const run=await runRes.json();const data=await resultRes.json();state.status=run.status;render(run,data.analysis)}catch(e){$("#workspace").innerHTML=`<div class="warning">无法读取任务：${html(e.message)}</div>`}}
+    function evidence(item){const e=item.evidence?.[0];if(!e)return `<div class="evidence">没有原文证据 · 需人工复核</div>`;const page=e.page_no?` · 第 ${e.page_no} 页`:" · 页码待映射";return `<div class="evidence"><strong>原文${html(page)}</strong><br>${html(e.quote)}<br><small>位置锚点 ${html(e.block_id)}${e.bbox?` · ${html(e.bbox.map(n=>Number(n).toFixed(1)).join(", "))}`:""}</small>${state.runId?`<div><a class="source-link" href="/api/v1/runs/${state.runId}/source" target="_blank" rel="noreferrer">打开原始文件 ↗</a></div>`:""}</div>`}
+    function evidencePicker(id,item){const current=item.evidence?.[0]?.block_id||"";return `<div class="review-controls"><input data-evidence-query="${html(id)}" placeholder="搜索原文内容块以补充证据" aria-label="搜索原文内容块"><select data-evidence-select="${html(id)}" data-current="${html(current)}"><option value="">选择原文位置</option></select></div>`}
+    function bindEvidencePickers(analysis){const blocks=analysis.document.blocks||[];document.querySelectorAll("[data-evidence-query]").forEach(input=>{const id=input.dataset.evidenceQuery,select=document.querySelector(`[data-evidence-select="${id}"]`),current=select.dataset.current;const renderOptions=()=>{const query=input.value.trim();const matches=query?blocks.filter(b=>b.text.includes(query)).slice(0,80):blocks.filter(b=>b.block_id===current);select.innerHTML=`<option value="">选择原文位置 (${query?"最多显示80条匹配":"现有证据位置"})</option>`+matches.map(b=>`<option value="${html(b.block_id)}">${html(b.page_no?`第${b.page_no}页 · `:"")}${html(b.kind)} · ${html(b.text.slice(0,100))}</option>`).join("");if(!query&&current)select.value=current};input.oninput=renderOptions;renderOptions()})}
+    function selectedEvidence(analysis,id){const blockId=document.querySelector(`[data-evidence-select="${id}"]`)?.value;const block=(analysis.document.blocks||[]).find(item=>item.block_id===blockId);return block?{document_id:analysis.document.document_id,page_no:block.page_no??null,block_id:block.block_id,quote:block.text,bbox:block.bbox??null,source_kind:block.kind}:null}
+    function render(run,analysis){if(!analysis){const pct=run.status==="queued"?8:run.stage==="parse"?35:60;$("#workspace").innerHTML=`<div class="card-head"><h2>解析进度</h2><span class="pill">${html(statusLabel[run.status]||run.status)}</span></div><div class="card-body"><div>${html(run.filename)}</div><div class="message">${html(run.error||`当前阶段：${run.stage}`)}</div><div class="progress"><span style="width:${pct}%"></span></div></div>`;return}
+      const selected=state.tab;const warnings=(analysis.warnings||[]).map(w=>`<div class="warning">${html(w)}</div>`).join("");const criteria=analysis.criteria||[];
+      const body=selected==="fields"?(analysis.project_fields||[]).map(f=>`<div class="field-row"><div class="field-top"><div><div class="field-label">${html(labels[f.field]||f.field)}</div><div class="field-value">${html(f.raw_value||"未发现")}</div></div><span class="pill ${f.review_state===`confirmed`?`confirmed`:`pending`}">${html(fieldStatus(f))}</span></div>${evidence(f)}<div class="review-controls"><input aria-label="修正字段值" placeholder="修正/补充字段" value="${html(f.raw_value||"")}" data-field-value="${html(f.field)}"><button class="secondary" data-confirm-field="${html(f.field)}">确认</button><button class="secondary" data-correct-field="${html(f.field)}">保存修正</button></div>${evidencePicker(`field-${f.field}`,f)}</div>`).join(""):
+      (criteria.filter(c=>selected==="technical"?c.category==="technical":selected==="commercial"?c.category==="commercial":selected==="price"?c.category==="price":c.category==="unclassified")).map(c=>`<article class="criterion"><div class="criterion-top"><strong>${html(c.subcategory||({technical:"技术评分",commercial:"商务评分",price:"价格评分",unclassified:"待分类"}[c.category]||c.category))}</strong><span class="pill ${c.review_state===`confirmed`?`confirmed`:`pending`}">${html(c.review_state===`confirmed`?`已确认`:"待核对")}</span></div><div class="criterion-text">${html(c.source_text)}</div><div class="criterion-meta">${c.max_score!==null&&c.max_score!==undefined?`<span>识别分值 ${html(c.max_score)} 分</span>`:""}<span>类别 ${html(c.category)}</span><span>状态 ${html(c.extraction_state)}</span></div>${evidence(c)}<div class="review-controls"><select data-action="${html(c.criterion_id)}"><option value="confirmed">确认</option><option value="corrected">修正</option><option value="rejected">驳回</option></select><select data-category="${html(c.criterion_id)}"><option value="technical" ${c.category==="technical"?"selected":""}>技术</option><option value="commercial" ${c.category==="commercial"?"selected":""}>商务</option><option value="price" ${c.category==="price"?"selected":""}>价格</option><option value="unclassified" ${c.category==="unclassified"?"selected":""}>待分类</option></select><input data-score="${html(c.criterion_id)}" placeholder="更正分值" type="number" step="0.1"><button data-save="${html(c.criterion_id)}">保存审核</button></div><textarea data-source-text="${html(c.criterion_id)}" aria-label="评分项原文修正">${html(c.source_text)}</textarea>${evidencePicker(c.criterion_id,c)}</article>`).join("")||`<div class="message">当前没有该类别的评分项候选。请核对章节树与处理账本，确保扫描件和跨页表格已完整解析。</div>`;
+      const blocks=analysis.document.blocks||[];const outline=(analysis.sections||[]).map(s=>`<div class="run-meta" style="padding:4px 0">${"　".repeat(Math.min((s.level||1)-1,5))}${html(s.title)}${s.page_no?` · 第${s.page_no}页`:""}</div>`).join("");
+      const finalize=run.status==="needs_review"?`<div class="review-controls"><button id="confirm-run">确认整份文件</button><span class="run-meta">确认前需逐项审核字段和评分候选</span></div>`:"";
+      $("#workspace").innerHTML=`<div class="card-head"><div class="section-title"><h2>解析结果</h2><span class="pill">${html(statusLabel[run.status]||run.status)}</span></div><a class="source-link" href="/api/v1/runs/${state.runId}/source" target="_blank" rel="noreferrer">打开原文件 ↗</a></div><div class="card-body"><div class="result-head"><h3>${html(run.filename)}</h3><span class="run-meta">任务 ${html(run.run_id.slice(0,8))} · ${html(analysis.document.block_count)} 个内容块 · ${html(analysis.document.chunk_count||0)} 个文本块</span>${run.status==="failed"?`<button id="retry-run">从检查点重试</button>`:""}</div>${warnings}<div class="tabs">${[["fields","项目字段"],["technical","技术评分"],["commercial","商务评分"],["price","价格评分"],["unclassified","待分类"]].map(([id,label])=>`<button class="tab ${selected===id?"active":""}" data-tab="${id}">${label}${id==="technical"&&analysis.criteria.filter(c=>c.category===id).length?` <span class="counter">${analysis.criteria.filter(c=>c.category===id).length}</span>`:""}</button>`).join("")}</div>${selected==="fields"?`<div class="message">必需字段未发现时，请核对处理账本，确认相关页面已完整解析。未归一化的日期与金额保留原文，避免擅自换算。</div>`:`<div class="message">评分项为候选摘录。请结合整行、表头、前后条款与页间续表核对；系统不自动将分类或分值视为最终结论。</div>`}${body}${finalize}<details style="margin-top:17px"><summary style="cursor:pointer;color:#5e6b64;font-size:12px">章节结构与原文块 · ${blocks.length} 个内容块</summary><div style="margin-top:9px">${outline}${blocks.slice(0,200).map(b=>`<div class="run-meta" style="padding:5px 0;border-top:1px solid #eef1ef">${html(b.page_no?`第${b.page_no}页 · `:"")}${html(b.kind)} · ${html(b.block_id)} · ${html(b.text.slice(0,260))}</div>`).join("")}${blocks.length>200?`<div class="run-meta">其余 ${blocks.length-200} 个内容块保存在结构化 API 中。</div>`:""}</div></details><details style="margin-top:12px"><summary style="cursor:pointer;color:#5e6b64;font-size:12px">处理账本 · ${analysis.ledger.length} 个对象</summary><div style="margin-top:9px">${analysis.ledger.slice(0,80).map(x=>`<div class="run-meta">${html(x.object_id)} · ${html(x.kind)} · ${html(x.state)}${x.reason?` · ${html(x.reason)}`:""}</div>`).join("")}</div></details></div>`;
+      document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;render(run,analysis)});
+      bindEvidencePickers(analysis);
+      const retryButton=$("#retry-run");if(retryButton)retryButton.onclick=async()=>{const response=await fetch(`/api/v1/runs/${state.runId}/retry`,{method:"POST"});if(response.ok){await load();poll()}else alert("任务重试失败")};
+      document.querySelectorAll("[data-save]").forEach(b=>b.onclick=async()=>{const id=b.dataset.save,action=document.querySelector(`[data-action="${id}"]`).value,score=document.querySelector(`[data-score="${id}"]`).value,category=document.querySelector(`[data-category="${id}"]`).value,sourceText=document.querySelector(`[data-source-text="${id}"]`).value,sourceEvidence=selectedEvidence(analysis,id);const response=await fetch(`/api/v1/runs/${state.runId}/criteria/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...(score?{max_score:Number(score)}:{}),...(action==="corrected"?{category,source_text:sourceText,...(sourceEvidence?{evidence:[sourceEvidence]}:{})}:{}),reviewer:"投标人员"})});if(response.ok)await load();else alert("保存审核失败：修正时请搜索并选择能逐字支持新原文的证据")});
+      document.querySelectorAll("[data-confirm-field],[data-correct-field]").forEach(b=>b.onclick=async()=>{const name=b.dataset.confirmField||b.dataset.correctField,correct=Boolean(b.dataset.correctField),value=document.querySelector(`[data-field-value="${name}"]`).value,sourceEvidence=selectedEvidence(analysis,`field-${name}`);const response=await fetch(`/api/v1/runs/${state.runId}/fields/${name}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:correct?"corrected":"confirmed",...(correct?{raw_value:value,...(sourceEvidence?{evidence:[sourceEvidence]}:{})}:{}),reviewer:"投标人员"})});if(response.ok)await load();else alert("保存字段审核失败：修正值需要选择可核对的原文证据")});
+      const confirmButton=$("#confirm-run");if(confirmButton)confirmButton.onclick=async()=>{const result=await fetch(`/api/v1/runs/${state.runId}/confirm`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reviewer:"投标人员",confirm_no_scoring_criteria:criteria.length===0})});if(result.ok)await load();else{const error=await result.json();alert(typeof error.detail==="string"?error.detail:(error.detail?.message||"仍有结果需要复核"))}};
+    }
+    renderRuns();
+  </script>
+</body>
+</html>
