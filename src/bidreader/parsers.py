@@ -1,5 +1,7 @@
 import hashlib
+import io
 import re
+import tempfile
 import zipfile
 from functools import lru_cache
 from pathlib import Path
@@ -9,7 +11,8 @@ from docx import Document as open_docx
 
 from bidreader.schemas import ParsedBlock
 
-SUPPORTED = {".docx", ".pdf", ".txt", ".md"}
+SUPPORTED = {".docx", ".pdf", ".txt", ".md", ".zip"}
+DOCUMENT_SUFFIXES = {".docx", ".pdf", ".txt", ".md"}
 
 
 class ParseFailure(RuntimeError):
@@ -143,7 +146,7 @@ def parse_docx(path: Path) -> tuple[list[ParsedBlock], list[dict]]:
                 cells = [re.sub(r"\s+", " ", cell.text).strip() for cell in row.cells]
                 if not any(cells):
                     continue
-                blocks.append(_new_block("table_row", " | ".join(cells), len(blocks), section_path=heading_stack.copy(), table_id=table_id, row_index=row_no))
+                blocks.append(_new_block("table_row", " | ".join(cells), len(blocks), section_path=heading_stack.copy(), table_id=table_id, row_index=row_no, cells=cells))
     return blocks, sections
 
 
@@ -213,7 +216,7 @@ def parse_pdf(path: Path, max_pages: int, *, ocr_enabled: bool = True, ocr_dpi: 
                             bbox = [min(cell[0] for cell in actual_cells), min(cell[1] for cell in actual_cells),
                                     max(cell[2] for cell in actual_cells), max(cell[3] for cell in actual_cells)] if actual_cells else list(table.bbox)
                             blocks.append(_new_block("table_row", " | ".join(row_text), len(blocks), page_no=page_no,
-                                                     bbox=bbox, table_id=table_id, row_index=row_index, section_path=heading_stack.copy()))
+                                                     bbox=bbox, table_id=table_id, row_index=row_index, section_path=heading_stack.copy(), cells=row_text))
                 ocr_blocks: list[ParsedBlock] = []
                 reason = "页面未检测到可提取文本；需 OCR 或人工复核。"
                 if not page_text.strip() and ocr_enabled:
@@ -262,10 +265,142 @@ def parse_text(path: Path) -> tuple[list[ParsedBlock], list[dict]]:
     return blocks, sections
 
 
+def _zip_member_name(name: str) -> str:
+    try:
+        return name.encode("cp437").decode("gbk")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return name
+
+
+def _parse_archive(path: Path, max_pages: int, *, ocr_enabled: bool, ocr_dpi: int) -> dict:
+    blocks: list[ParsedBlock] = []
+    sections: list[dict] = []
+    pages: list[dict] = []
+    ledger: list[dict] = []
+    warnings: list[str] = []
+    counts = {"entries": 0, "expanded": 0, "documents": 0, "skipped": 0}
+
+    def visit(data: bytes, archive_name: str, depth: int = 0) -> None:
+        if depth > 4:
+            raise ParseFailure("ZIP 嵌套超过 4 层，已停止解析。")
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(data))
+        except zipfile.BadZipFile as exc:
+            raise ParseFailure(f"压缩包无效：{archive_name}") from exc
+        with archive:
+            for info in archive.infolist():
+                if info.is_dir():
+                    continue
+                counts["entries"] += 1
+                counts["expanded"] += info.file_size
+                if counts["entries"] > 10_000 or counts["expanded"] > 512 * 1024 * 1024:
+                    raise ParseFailure("压缩包条目数或解压后总体积超过安全上限。", ledger=ledger)
+                if info.file_size / max(info.compress_size, 1) > 250:
+                    raise ParseFailure(f"压缩包内条目压缩比异常，已停止解析：{info.filename}", ledger=ledger)
+                member = _zip_member_name(info.filename).replace("\\", "/")
+                parts = Path(member).parts
+                if member.startswith("/") or ".." in parts:
+                    ledger.append({"object_id": f"archive-entry-{counts['entries']}", "kind": "archive_entry",
+                                   "state": "failed_review", "reason": "压缩包成员路径不安全，未读取。", "source_file": member})
+                    continue
+                source_file = f"{archive_name}!/{member}"
+                suffix = Path(member).suffix.lower()
+                if suffix == ".zip":
+                    visit(archive.read(info), source_file, depth + 1)
+                    continue
+                if suffix not in DOCUMENT_SUFFIXES:
+                    counts["skipped"] += 1
+                    if suffix in {".doc", ".xlsx", ".xls", ".sign"}:
+                        ledger.append({"object_id": f"archive-entry-{counts['entries']}", "kind": suffix[1:] or "file",
+                                       "state": "failed_review", "reason": "当前解析器不支持此附件格式，未纳入自动分析。",
+                                       "source_file": source_file})
+                    continue
+                if counts["documents"] >= 200:
+                    raise ParseFailure("压缩包中可解析文件超过 200 个，已停止解析。", ledger=ledger)
+                counts["documents"] += 1
+                prefix = f"d-{counts['documents']:04d}-"
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+                        temp_file.write(archive.read(info))
+                        temp_path = Path(temp_file.name)
+                    try:
+                        if suffix == ".docx":
+                            parsed_blocks, parsed_sections = parse_docx(temp_path)
+                            parsed_pages: list[dict] = []
+                            parsed_ledger = [{"object_id": b.block_id, "kind": b.kind, "state": "done", "reason": None} for b in parsed_blocks]
+                        elif suffix == ".pdf":
+                            if temp_path.read_bytes()[:5] != b"%PDF-":
+                                raise ParseFailure("PDF 文件头无效。")
+                            parsed_blocks, parsed_sections, parsed_pages, parsed_ledger = parse_pdf(
+                                temp_path, max_pages, ocr_enabled=ocr_enabled, ocr_dpi=ocr_dpi
+                            )
+                        else:
+                            parsed_blocks, parsed_sections = parse_text(temp_path)
+                            parsed_pages = []
+                            parsed_ledger = [{"object_id": b.block_id, "kind": b.kind, "state": "done", "reason": None} for b in parsed_blocks]
+                        if not parsed_blocks:
+                            raise ParseFailure("文档没有可解析文字或结构。")
+                    finally:
+                        temp_path.unlink(missing_ok=True)
+                    id_map = {block.block_id: f"{prefix}{block.block_id}" for block in parsed_blocks}
+                    for block in parsed_blocks:
+                        block.block_id = id_map[block.block_id]
+                        block.table_id = f"{prefix}{block.table_id}" if block.table_id else None
+                        block.source_file = source_file
+                        blocks.append(block)
+                    for section in parsed_sections:
+                        section["block_id"] = id_map.get(section.get("block_id"), section.get("block_id"))
+                        section["source_file"] = source_file
+                        sections.append(section)
+                    for page in parsed_pages:
+                        pages.append({**page, "source_file": source_file})
+                    for item in parsed_ledger:
+                        item["object_id"] = f"{prefix}{item['object_id']}"
+                        item["source_file"] = source_file
+                        ledger.append(item)
+                    if suffix == ".docx":
+                        warnings.append(f"{source_file}：页码需经固定版本文档渲染后映射。")
+                except ParseFailure as exc:
+                    ledger.append({"object_id": prefix.rstrip("-"), "kind": suffix[1:], "state": "failed_review",
+                                   "reason": str(exc), "source_file": source_file})
+                    warnings.append(f"{source_file} 未能解析，需人工复核。")
+
+    visit(path.read_bytes(), path.name)
+    if not blocks:
+        raise ParseFailure("压缩包中没有可解析的 DOCX、PDF、TXT 或 Markdown 附件。", ledger=ledger)
+    if counts["skipped"]:
+        warnings.append(f"压缩包内有 {counts['skipped']} 个不支持的附件（例如旧版 DOC 或表格文件），未纳入自动分析。")
+    chunks: list[dict] = []
+    current: list[ParsedBlock] = []
+    char_count = 0
+    for block in blocks:
+        if current and char_count + len(block.text) > 1600:
+            chunks.append({"chunk_id": f"chunk-{len(chunks):06d}", "block_ids": [item.block_id for item in current],
+                           "section_path": current[-1].section_path, "text": "\n".join(item.text for item in current)})
+            current, char_count = [], 0
+        current.append(block)
+        char_count += len(block.text)
+    if current:
+        chunks.append({"chunk_id": f"chunk-{len(chunks):06d}", "block_ids": [item.block_id for item in current],
+                       "section_path": current[-1].section_path, "text": "\n".join(item.text for item in current)})
+    package_match = next((match for block in blocks
+                          if "技术规范书" in (block.source_file or "")
+                          and (match := re.search(r"结算审核\s*包\s*\d+", block.text))), None)
+    if package_match is None:
+        package_match = next((match for block in blocks
+                              if (match := re.search(r"结算审核\s*包\s*\d+", block.text))), None)
+    return {"blocks": [block.model_dump() for block in blocks], "sections": sections, "pages": pages,
+            "chunks": chunks, "ledger": ledger, "parser": "nested-zip+docx/pdf/text",
+            "warnings": warnings[:40], "scope_hint": package_match.group(0) if package_match else None,
+            "archive_stats": counts, "document_id": str(uuid4()), "sha256": file_hash(path)}
+
+
 def parse_document(path: Path, max_pages: int, *, ocr_enabled: bool = True, ocr_dpi: int = 180) -> dict:
     suffix = path.suffix.lower()
     if suffix not in SUPPORTED:
-        raise ParseFailure(f"暂不支持 {suffix or '无扩展名'}。当前支持 DOCX、PDF、TXT 和 Markdown。")
+        raise ParseFailure(f"暂不支持 {suffix or '无扩展名'}。当前支持 DOCX、PDF、TXT、Markdown 和 ZIP 文件包。")
+    if suffix == ".zip":
+        return _parse_archive(path, max_pages, ocr_enabled=ocr_enabled, ocr_dpi=ocr_dpi)
     pages: list[dict] = []
     if suffix == ".docx":
         blocks, sections = parse_docx(path)

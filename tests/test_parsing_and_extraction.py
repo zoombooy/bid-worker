@@ -1,3 +1,4 @@
+import zipfile
 from io import BytesIO
 
 from docx import Document
@@ -10,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from bidreader.app import _validate_evidence, app, settings
 from bidreader.database import Base, get_session
 from bidreader.evaluation import aggregate_corpus, evaluate
-from bidreader.extraction import extract_criteria, extract_fields
+from bidreader.extraction import _package_specific_fields, extract_criteria, extract_fields
 from bidreader.models import Analysis, Run, RunEvent
 from bidreader.parsers import _ocr_page, parse_document, parse_docx
 
@@ -34,10 +35,11 @@ def _docx_bytes() -> bytes:
 def _blocks():
     return [
         {"block_id": "b-0", "kind": "heading", "text": "评标办法", "page_no": 3, "bbox": None, "section_path": ["评标办法"], "source_index": 0},
-        {"block_id": "b-1", "kind": "line", "text": "技术评分标准", "page_no": 3, "bbox": None, "section_path": ["评标办法"], "source_index": 1},
-        {"block_id": "b-2", "kind": "table_row", "text": "相似工程业绩 | 每提供一项得 2 分，最高 6 分", "page_no": 4, "bbox": [30, 40, 400, 80], "section_path": ["评标办法", "技术评分标准"], "source_index": 2, "table_id": "t-1", "row_index": 2},
-        {"block_id": "b-3", "kind": "heading", "text": "投标文件格式", "page_no": 15, "bbox": None, "section_path": ["投标文件格式"], "source_index": 3},
-        {"block_id": "b-4", "kind": "line", "text": "未响应投标文件格式的，不予受理", "page_no": 16, "bbox": None, "section_path": ["投标文件格式"], "source_index": 4},
+        {"block_id": "b-1", "kind": "line", "text": "评标办法前附表之四：技术评分标准", "page_no": 3, "bbox": None, "section_path": ["评标办法"], "source_index": 1},
+        {"block_id": "b-head", "kind": "table_row", "text": "序号 | 项目 | 评审内容及分值 | 项目内容", "cells": ["序号", "项目", "评审内容及分值", "项目内容"], "page_no": 4, "bbox": [30, 20, 400, 35], "section_path": ["评标办法"], "source_index": 2, "table_id": "t-1", "row_index": 0},
+        {"block_id": "b-2", "kind": "table_row", "text": "1 | 相似工程业绩 | 相似工程业绩（最高 6 分） | 每提供一项得 2 分，最高 6 分", "cells": ["1", "相似工程业绩", "相似工程业绩（最高 6 分）", "每提供一项得 2 分，最高 6 分"], "page_no": 4, "bbox": [30, 40, 400, 80], "section_path": ["评标办法", "技术评分标准"], "source_index": 3, "table_id": "t-1", "row_index": 1},
+        {"block_id": "b-3", "kind": "heading", "text": "投标文件格式", "page_no": 15, "bbox": None, "section_path": ["投标文件格式"], "source_index": 4},
+        {"block_id": "b-4", "kind": "line", "text": "未响应投标文件格式的，不予受理", "page_no": 16, "bbox": None, "section_path": ["投标文件格式"], "source_index": 5},
     ]
 
 
@@ -103,6 +105,23 @@ def test_vendored_amount_normalization_is_only_mapped_with_explicit_tender_label
     assert fields["price_limit"].raw_value == "500万元"
     assert fields["price_limit"].normalized_value == "5000000.00"
     assert fields["price_limit"].evidence[0].block_id == "b-price"
+
+
+def test_field_extraction_rejects_cross_references_and_non_date_deadline_text():
+    blocks = [
+        {"block_id": "b-title", "kind": "paragraph", "text": "项目名称：见投标人须知前附表。",
+         "page_no": None, "bbox": None, "section_path": [], "source_index": 0},
+        {"block_id": "b-date", "kind": "paragraph", "text": "投标截止之日至中标通知书送达前，均适用该规定。",
+         "page_no": None, "bbox": None, "section_path": [], "source_index": 1},
+        {"block_id": "b-duration", "kind": "paragraph", "text": "计划工期要求以技术规范书和工程量清单为准。",
+         "page_no": None, "bbox": None, "section_path": [], "source_index": 2},
+    ]
+
+    fields = {item.field: item for item in extract_fields(blocks, "doc-field-quality")}
+
+    assert fields["project_title"].state == "not_found"
+    assert fields["submission_deadline"].state == "not_found"
+    assert fields["duration"].state == "not_found"
 
 
 def test_evidence_validation_rejects_forged_page_or_block_quote():
@@ -205,10 +224,48 @@ def test_scoring_candidate_keeps_source_and_evidence_without_assumed_total():
     assert candidate.category == "technical"
     assert candidate.subcategory == "similar_projects"
     assert candidate.max_score == 6
-    assert candidate.source_text == _blocks()[2]["text"]
+    assert candidate.source_text == _blocks()[3]["text"]
     assert candidate.evidence[0].page_no == 4
     assert candidate.evidence[0].bbox == [30, 40, 400, 80]
     assert "不予受理" not in candidate.source_text
+
+
+def test_scoring_extraction_ignores_boilerplate_mentions_outside_scoring_tables():
+    blocks = [
+        {"block_id": "b-1", "kind": "paragraph", "text": "评标委员会按评标办法评分", "source_index": 0},
+        {"block_id": "b-2", "kind": "paragraph", "text": "类似工程业绩每项得 2 分，最高 6 分", "source_index": 1},
+    ]
+
+    assert extract_criteria(blocks, "doc-boilerplate") == []
+
+
+def test_scoring_caps_handle_negative_ranges_and_composite_staffing_rows():
+    blocks = [
+        {"block_id": "h", "kind": "paragraph", "text": "评标办法前附表之三：商务评分标准", "source_index": 0},
+        {"block_id": "h1", "kind": "table_row", "text": "序号 | 项目 | 评审内容及分值 | 项目内容",
+         "cells": ["序号", "项目", "评审内容及分值", "项目内容"], "source_index": 1, "table_id": "t-1", "row_index": 0},
+        {"block_id": "negative", "kind": "table_row", "text": "1 | 诚信评价 | 不良行为（-30-0） | 有不良行为扣30分",
+         "cells": ["1", "诚信评价", "不良行为（-30-0）", "有不良行为扣30分"], "source_index": 2, "table_id": "t-1", "row_index": 1},
+        {"block_id": "h2", "kind": "paragraph", "text": "评标办法前附表之四：技术评分标准", "source_index": 3},
+        {"block_id": "h3", "kind": "table_row", "text": "序号 | 项目 | 评审内容及分值 | 项目内容",
+         "cells": ["序号", "项目", "评审内容及分值", "项目内容"], "source_index": 4, "table_id": "t-2", "row_index": 0},
+        {"block_id": "staff", "kind": "table_row",
+         "text": "1 | 团队配置（15分） | 工作组织及人员配备（15分） | （1）本项最高得4分（2）本项最高得8分（3）本项最高得3分（4）本项最高得3分",
+         "cells": ["1", "团队配置（15分）", "工作组织及人员配备（15分）",
+                   "（1）本项最高得4分（2）本项最高得8分（3）本项最高得3分（4）本项最高得3分",
+                   "（1）本项最高得4分（2）本项最高得8分（3）本项最高得3分（4）本项最高得3分"],
+         "source_index": 5, "table_id": "t-2", "row_index": 1},
+    ]
+
+    criteria = extract_criteria(blocks, "doc-score")
+    negative = next(item for item in criteria if item.criterion_label.startswith("不良行为"))
+    staffing = next(item for item in criteria if item.subcategory == "team_staffing")
+
+    assert negative.max_score == 0
+    assert staffing.criterion_label == "工作组织及人员配备（15分）"
+    assert staffing.max_score == 15
+    assert len(staffing.conditions) == 4
+    assert "合计18分" in staffing.review_reason
 
 
 def test_text_upload_parser_records_hash_and_anchor(tmp_path):
@@ -221,6 +278,54 @@ def test_text_upload_parser_records_hash_and_anchor(tmp_path):
     assert parsed["parser"] == "utf-8-text"
     assert parsed["blocks"][0]["text"] == "项目名称：示例工程"
     assert all(item["state"] == "done" for item in parsed["ledger"])
+
+
+def test_zip_bundle_parsing_keeps_nested_document_sources_and_skips_old_formats(tmp_path):
+    nested = BytesIO()
+    with zipfile.ZipFile(nested, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("nested.docx", _docx_bytes())
+    package_doc = Document()
+    package_doc.add_heading("结算审核包2", level=1)
+    package_bytes = BytesIO()
+    package_doc.save(package_bytes)
+    path = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("main.docx", _docx_bytes())
+        archive.writestr("nested.zip", nested.getvalue())
+        archive.writestr("技术规范书.docx", package_bytes.getvalue())
+        archive.writestr("legacy.doc", b"legacy Word")
+
+    parsed = parse_document(path, max_pages=100, ocr_enabled=False)
+
+    assert parsed["archive_stats"]["documents"] == 3
+    assert parsed["scope_hint"] == "结算审核包2"
+    assert len({block["block_id"] for block in parsed["blocks"]}) == len(parsed["blocks"])
+    assert {block["source_file"].split("!/")[-1] for block in parsed["blocks"]} == {
+        "main.docx", "nested.docx", "技术规范书.docx"
+    }
+    assert any(item["kind"] == "doc" and item["state"] == "failed_review" for item in parsed["ledger"])
+
+
+def test_package_specific_fields_match_package_row_and_keep_table_evidence():
+    blocks = [
+        {"block_id": "b-head", "kind": "table_row", "text": "包号 | 工程名称 | 包名称 | 项目地点 | 招标范围 | 开始时间（年月） | 完成时间（年月） | 分项限价（万元） | 最高限价（万元）",
+         "cells": ["包号", "工程名称", "包名称", "项目地点", "招标范围", "开始时间（年月）", "完成时间（年月）", "分项限价（万元）", "最高限价（万元）"],
+         "source_index": 0, "table_id": "t-1", "row_index": 0},
+        {"block_id": "b-package1", "kind": "table_row", "text": "包1 | 浙江特高压交流环网线路工程 | 浙江环网结算审核包1 | 浙江 | 审核 | 2026年11月 | 2030年4月 | \\ | 581",
+         "cells": ["包1", "浙江特高压交流环网线路工程", "浙江环网结算审核包1", "浙江", "审核", "2026年11月", "2030年4月", "\\", "581"],
+         "source_index": 1, "table_id": "t-1", "row_index": 1, "source_file": "notice.docx"},
+        {"block_id": "b-package12", "kind": "table_row", "text": "包12 | 其他线路工程 | 其他结算审核包12 | 浙江 | 审核 | 2026年11月 | 2030年4月 | \\ | 700",
+         "cells": ["包12", "其他线路工程", "其他结算审核包12", "浙江", "审核", "2026年11月", "2030年4月", "\\", "700"],
+         "source_index": 2, "table_id": "t-1", "row_index": 2, "source_file": "notice.docx"},
+    ]
+
+    fields = {item.field: item for item in _package_specific_fields(blocks, "doc-1", "结算审核包1")}
+
+    assert fields["project_title"].raw_value == "浙江特高压交流环网线路工程"
+    assert fields["package_name"].raw_value == "浙江环网结算审核包1"
+    assert fields["price_limit"].normalized_value == "5810000.00"
+    assert fields["duration"].raw_value == "开始时间 2026年11月 至 完成时间 2030年4月"
+    assert fields["price_limit"].evidence[0].block_id == "b-package1"
 
 
 def test_upload_endpoint_persists_task_and_review_uses_history(tmp_path, monkeypatch):

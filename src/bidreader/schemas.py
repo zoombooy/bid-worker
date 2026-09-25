@@ -13,6 +13,7 @@ class ReviewState(StrEnum):
 
 class Evidence(BaseModel):
     document_id: str
+    source_file: str | None = None
     page_no: int | None = None
     block_id: str
     quote: str
@@ -37,6 +38,8 @@ class ParsedBlock(BaseModel):
     table_id: str | None = None
     row_index: int | None = None
     cell_index: int | None = None
+    cells: list[str] = Field(default_factory=list)
+    source_file: str | None = None
 
 
 class ProjectField(BaseModel):
@@ -53,7 +56,9 @@ class ProjectField(BaseModel):
 class Criterion(BaseModel):
     criterion_id: str
     category: str
+    criterion_label: str | None = None
     subcategory: str | None = None
+    related_subcategories: list[str] = Field(default_factory=list)
     source_text: str
     score_text: str | None = None
     max_score: float | None = None
@@ -61,6 +66,7 @@ class Criterion(BaseModel):
     evidence_required: list[str] = Field(default_factory=list)
     conditions: list[str] = Field(default_factory=list)
     formula_text: str | None = None
+    scope_label: str | None = None
     evidence: list[Evidence] = Field(default_factory=list)
     extraction_state: str = "candidate"
     review_state: ReviewState = ReviewState.PENDING
