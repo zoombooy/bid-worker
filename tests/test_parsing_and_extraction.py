@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from bidreader.app import _validate_evidence, app, settings
 from bidreader.database import Base, get_session
+from bidreader.evaluation import aggregate_corpus, evaluate
 from bidreader.extraction import extract_criteria, extract_fields
 from bidreader.models import Analysis, Run, RunEvent
 from bidreader.parsers import _ocr_page, parse_document, parse_docx
@@ -99,6 +100,70 @@ def test_paddle_ocr_boxes_map_back_to_pdf_points(monkeypatch):
     assert blocks[0].text == "最高限价"
     assert blocks[0].bbox == [10, 20, 90, 40]
     assert blocks[0].page_no == 2
+
+
+def test_gold_evaluation_reports_recall_precision_score_and_citation_accuracy():
+    digest = "a" * 64
+    gold = {
+        "schema_version": "1.0",
+        "annotation_complete": True,
+        "document": {"sha256": digest},
+        "coverage_reviewed": ["project_fields", "technical_criteria", "commercial_criteria", "price_criteria"],
+        "project_fields": {"project_title": {"value": "示例 工程"}, "project_number": {"value": None}},
+        "criteria": [{"category": "technical", "source_quote": "类似工程业绩每项得2分最高6分。",
+                      "page_no": 8, "max_score": 6, "bbox": [10, 20, 100, 40]}],
+    }
+    prediction = {"analysis": {
+        "document": {"sha256": digest},
+        "project_fields": [{"field": "project_title", "raw_value": "示例工程"},
+                           {"field": "project_number", "raw_value": None}],
+        "criteria": [
+            {"criterion_id": "hit", "category": "technical", "source_text": "类似工程业绩每项得2分最高6分。",
+             "max_score": 6, "evidence": [{"page_no": 8, "quote": "类似工程业绩每项得2分最高6分。",
+                                            "bbox": [10, 20, 100, 40]}]},
+            {"criterion_id": "extra", "category": "commercial", "source_text": "企业信用评价加3分",
+             "max_score": 3, "evidence": [{"page_no": 12, "quote": "企业信用评价加3分"}]},
+        ],
+    }}
+
+    report = evaluate(gold, prediction)
+
+    assert report["metrics"]["project_field_exact_accuracy"] == 1.0
+    assert report["metrics"]["criterion_precision"] == 0.5
+    assert report["metrics"]["criterion_recall"] == 1.0
+    assert report["metrics"]["criterion_max_score_accuracy"] == 1.0
+    assert report["metrics"]["evidence_quote_and_page_accuracy"] == 1.0
+    assert report["metrics"]["bbox_iou_at_least_0_5_accuracy"] == 1.0
+    corpus = aggregate_corpus([{"project_id": "p-1", "split": "blind_test", "format": "scanned_pdf",
+                               "report": report}])
+    assert corpus["by_split"]["blind_test"]["metrics"]["criterion_f1"] == report["metrics"]["criterion_f1"]
+    assert corpus["by_format"]["scanned_pdf"]["samples"] == 1
+
+
+def test_corpus_evaluation_rejects_project_leakage_across_splits():
+    sample = {"project_id": "same-project", "split": "development", "report": {"counts": {}}}
+    duplicate = {**sample, "split": "blind_test"}
+
+    try:
+        aggregate_corpus([sample, duplicate])
+    except ValueError as exc:
+        assert "项目级泄漏" in str(exc)
+    else:
+        raise AssertionError("the corpus evaluator must reject project leakage between splits")
+
+
+def test_gold_evaluation_rejects_wrong_document_version():
+    gold = {"schema_version": "1.0", "annotation_complete": True,
+            "document": {"sha256": "a" * 64},
+            "coverage_reviewed": ["project_fields", "technical_criteria", "commercial_criteria", "price_criteria"],
+            "project_fields": {"project_title": None}, "criteria": []}
+
+    try:
+        evaluate(gold, {"document": {"sha256": "b" * 64}, "project_fields": [], "criteria": []})
+    except ValueError as exc:
+        assert "SHA-256" in str(exc)
+    else:
+        raise AssertionError("evaluation should reject predictions from a different source file version")
 
 
 def test_scoring_candidate_keeps_source_and_evidence_without_assumed_total():

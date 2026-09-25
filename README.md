@@ -40,3 +40,7 @@ PaddleOCR 3.x 还需要按操作系统/CPU/GPU环境安装匹配的 PaddlePaddle
 ```powershell
 python -m pytest
 ```
+
+## 样本基线评测
+
+还没有用户标注的真实招标文件，因此目前没有对外宣称识别准确率。黄金样本格式、双人标注约定和逐文件评测命令见 [evaluation/README.md](evaluation/README.md)；评测前要求标注完整覆盖并校验原件 SHA-256，避免将不完整标注或不同文件版本算成有效指标。

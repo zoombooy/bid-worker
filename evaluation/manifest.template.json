@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "samples": [
+    {
+      "project_id": "project-001",
+      "split": "development",
+      "format": "docx",
+      "gold": "gold_project_001.json",
+      "prediction": "prediction_project_001.json"
+    }
+  ]
+}

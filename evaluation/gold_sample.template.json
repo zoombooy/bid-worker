@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "annotation_complete": false,
+  "document": {
+    "filename": "replace-with-original-filename",
+    "sha256": "",
+    "format": "docx|pdf|txt|md"
+  },
+  "coverage_reviewed": [],
+  "project_fields": {},
+  "criteria": [],
+  "annotation": {
+    "reviewer": "",
+    "notes": "确认完整阅读原件并标注全部项目字段及全部技术、商务、价格评分项后，才将 annotation_complete 改为 true。"
+  }
+}
