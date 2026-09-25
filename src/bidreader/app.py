@@ -58,6 +58,8 @@ def _validate_evidence(document: dict, evidence_items: list[dict], expected_text
             continue
         if evidence.get("page_no") != block.get("page_no") or evidence.get("bbox") != block.get("bbox"):
             continue
+        if evidence.get("sheet_name") != block.get("sheet_name") or evidence.get("cell_range") != block.get("cell_range"):
+            continue
         if evidence.get("source_file") and evidence.get("source_file") != block.get("source_file"):
             continue
         valid_quotes.append(quote)

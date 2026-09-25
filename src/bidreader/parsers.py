@@ -11,8 +11,8 @@ from docx import Document as open_docx
 
 from bidreader.schemas import ParsedBlock
 
-SUPPORTED = {".docx", ".pdf", ".txt", ".md", ".zip"}
-DOCUMENT_SUFFIXES = {".docx", ".pdf", ".txt", ".md"}
+SUPPORTED = {".docx", ".pdf", ".xlsx", ".txt", ".md", ".zip"}
+DOCUMENT_SUFFIXES = {".docx", ".pdf", ".xlsx", ".txt", ".md"}
 
 
 class ParseFailure(RuntimeError):
@@ -147,6 +147,62 @@ def parse_docx(path: Path) -> tuple[list[ParsedBlock], list[dict]]:
                 if not any(cells):
                     continue
                 blocks.append(_new_block("table_row", " | ".join(cells), len(blocks), section_path=heading_stack.copy(), table_id=table_id, row_index=row_no, cells=cells))
+    return blocks, sections
+
+
+def parse_xlsx(path: Path) -> tuple[list[ParsedBlock], list[dict]]:
+    """Read worksheets as row blocks and retain sheet/cell anchors for review."""
+    try:
+        from openpyxl import load_workbook
+        from openpyxl.cell.cell import MergedCell
+        from openpyxl.utils import get_column_letter
+    except ImportError as exc:
+        raise ParseFailure("解析 XLSX 需要安装 openpyxl。") from exc
+    try:
+        workbook = load_workbook(path, data_only=True, read_only=False, keep_links=False)
+    except Exception as exc:
+        raise ParseFailure(f"XLSX 无法读取：{type(exc).__name__}") from exc
+    blocks: list[ParsedBlock] = []
+    sections: list[dict] = []
+    try:
+        for sheet_index, sheet in enumerate(workbook.worksheets):
+            if sheet.max_row > 100_000 or sheet.max_row * max(sheet.max_column, 1) > 1_000_000:
+                raise ParseFailure(f"工作表 {sheet.title} 的声明尺寸超过解析安全上限。")
+            merged_ranges = list(sheet.merged_cells.ranges)
+            section_added = False
+            for row_no in range(1, sheet.max_row + 1):
+                values: list[str] = []
+                populated_columns: list[int] = []
+                for cell in sheet[row_no]:
+                    value = cell.value
+                    if isinstance(cell, MergedCell):
+                        value = next((
+                            sheet.cell(merged.min_row, merged.min_col).value
+                            for merged in merged_ranges
+                            if merged.min_row <= row_no <= merged.max_row
+                            and merged.min_col <= cell.column <= merged.max_col
+                        ), None)
+                    text = re.sub(r"\s+", " ", str(value)).strip() if value is not None else ""
+                    values.append(text)
+                    if text:
+                        populated_columns.append(cell.column)
+                if not populated_columns:
+                    continue
+                first_col, last_col = min(populated_columns), max(populated_columns)
+                cells = values[first_col - 1:last_col]
+                cell_range = f"{get_column_letter(first_col)}{row_no}:{get_column_letter(last_col)}{row_no}"
+                blocks.append(_new_block(
+                    "table_row", " | ".join(cells), len(blocks), table_id=f"xlsx-{sheet_index:03d}",
+                    row_index=row_no - 1, cells=cells, section_path=[sheet.title],
+                    sheet_name=sheet.title, cell_range=cell_range,
+                ))
+                if not section_added:
+                    sections.append({"title": sheet.title, "level": 1, "section_path": [sheet.title],
+                                     "block_id": blocks[-1].block_id, "sheet_name": sheet.title,
+                                     "cell_range": cell_range})
+                    section_added = True
+    finally:
+        workbook.close()
     return blocks, sections
 
 
@@ -310,7 +366,7 @@ def _parse_archive(path: Path, max_pages: int, *, ocr_enabled: bool, ocr_dpi: in
                     continue
                 if suffix not in DOCUMENT_SUFFIXES:
                     counts["skipped"] += 1
-                    if suffix in {".doc", ".xlsx", ".xls", ".sign"}:
+                    if suffix in {".doc", ".xls", ".sign"}:
                         ledger.append({"object_id": f"archive-entry-{counts['entries']}", "kind": suffix[1:] or "file",
                                        "state": "failed_review", "reason": "当前解析器不支持此附件格式，未纳入自动分析。",
                                        "source_file": source_file})
@@ -328,6 +384,11 @@ def _parse_archive(path: Path, max_pages: int, *, ocr_enabled: bool, ocr_dpi: in
                             parsed_blocks, parsed_sections = parse_docx(temp_path)
                             parsed_pages: list[dict] = []
                             parsed_ledger = [{"object_id": b.block_id, "kind": b.kind, "state": "done", "reason": None} for b in parsed_blocks]
+                        elif suffix == ".xlsx":
+                            parsed_blocks, parsed_sections = parse_xlsx(temp_path)
+                            parsed_pages = []
+                            parsed_ledger = [{"object_id": b.block_id, "kind": b.kind, "state": "done", "reason": None,
+                                              "sheet_name": b.sheet_name, "cell_range": b.cell_range} for b in parsed_blocks]
                         elif suffix == ".pdf":
                             if temp_path.read_bytes()[:5] != b"%PDF-":
                                 raise ParseFailure("PDF 文件头无效。")
@@ -367,7 +428,7 @@ def _parse_archive(path: Path, max_pages: int, *, ocr_enabled: bool, ocr_dpi: in
 
     visit(path.read_bytes(), path.name)
     if not blocks:
-        raise ParseFailure("压缩包中没有可解析的 DOCX、PDF、TXT 或 Markdown 附件。", ledger=ledger)
+        raise ParseFailure("压缩包中没有可解析的 DOCX、PDF、XLSX、TXT 或 Markdown 附件。", ledger=ledger)
     if counts["skipped"]:
         warnings.append(f"压缩包内有 {counts['skipped']} 个不支持的附件（例如旧版 DOC 或表格文件），未纳入自动分析。")
     chunks: list[dict] = []
@@ -398,7 +459,7 @@ def _parse_archive(path: Path, max_pages: int, *, ocr_enabled: bool, ocr_dpi: in
 def parse_document(path: Path, max_pages: int, *, ocr_enabled: bool = True, ocr_dpi: int = 180) -> dict:
     suffix = path.suffix.lower()
     if suffix not in SUPPORTED:
-        raise ParseFailure(f"暂不支持 {suffix or '无扩展名'}。当前支持 DOCX、PDF、TXT、Markdown 和 ZIP 文件包。")
+        raise ParseFailure(f"暂不支持 {suffix or '无扩展名'}。当前支持 DOCX、PDF、XLSX、TXT、Markdown 和 ZIP 文件包。")
     if suffix == ".zip":
         return _parse_archive(path, max_pages, ocr_enabled=ocr_enabled, ocr_dpi=ocr_dpi)
     pages: list[dict] = []
@@ -409,6 +470,12 @@ def parse_document(path: Path, max_pages: int, *, ocr_enabled: bool = True, ocr_
             section["page_no"] = None
         parser = "python-docx"
         warnings = ["DOCX 原生段落定位已记录；页码和页面坐标需固定版本渲染器后建立映射。"]
+    elif suffix == ".xlsx":
+        blocks, sections = parse_xlsx(path)
+        ledger = [{"object_id": block.block_id, "kind": block.kind, "state": "done", "reason": None,
+                   "sheet_name": block.sheet_name, "cell_range": block.cell_range} for block in blocks]
+        parser = "openpyxl"
+        warnings = ["XLSX 按工作表行解析，证据使用工作表名和单元格范围定位。"]
     elif suffix == ".pdf":
         if path.read_bytes()[:5] != b"%PDF-":
             raise ParseFailure("PDF 文件头无效。")

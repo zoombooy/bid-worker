@@ -3,6 +3,7 @@ from io import BytesIO
 
 from docx import Document
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 from PIL import Image
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -133,6 +134,17 @@ def test_evidence_validation_rejects_forged_page_or_block_quote():
     assert _validate_evidence(document, evidence, "样例工程")
     assert not _validate_evidence(document, [{**evidence[0], "page_no": 4}], "样例工程")
     assert not _validate_evidence(document, [{**evidence[0], "quote": "虚构工程"}], "虚构工程")
+
+
+def test_evidence_validation_checks_xlsx_sheet_and_cell_anchor():
+    document = {"document_id": "doc-xlsx", "blocks": [{
+        "block_id": "b-row", "text": "包1 | 保证金581万元", "page_no": None, "bbox": None,
+        "sheet_name": "保证金清单", "cell_range": "A2:B2"}]}
+    evidence = [{"document_id": "doc-xlsx", "page_no": None, "bbox": None, "block_id": "b-row",
+                 "sheet_name": "保证金清单", "cell_range": "A2:B2", "quote": "保证金581万元"}]
+
+    assert _validate_evidence(document, evidence, "保证金581万元")
+    assert not _validate_evidence(document, [{**evidence[0], "cell_range": "A3:B3"}], "保证金581万元")
 
 
 def test_paddle_ocr_boxes_map_back_to_pdf_points(monkeypatch):
@@ -280,6 +292,31 @@ def test_text_upload_parser_records_hash_and_anchor(tmp_path):
     assert all(item["state"] == "done" for item in parsed["ledger"])
 
 
+def test_xlsx_parser_preserves_sheet_cell_and_merged_context(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "保证金清单"
+    sheet.merge_cells("A1:A2")
+    sheet["A1"] = "包件"
+    sheet["B1"] = "保证金金额"
+    sheet["B2"] = "581万元"
+    path = tmp_path / "guarantees.xlsx"
+    workbook.save(path)
+
+    parsed = parse_document(path, max_pages=100)
+    rows = parsed["blocks"]
+
+    assert parsed["parser"] == "openpyxl"
+    assert rows[0]["sheet_name"] == "保证金清单"
+    assert rows[0]["cell_range"] == "A1:B1"
+    assert rows[1]["cells"] == ["包件", "581万元"]
+    assert rows[1]["cell_range"] == "A2:B2"
+    assert rows[1]["section_path"] == ["保证金清单"]
+    assert len(parsed["sections"]) == 1
+    assert parsed["ledger"][1]["sheet_name"] == "保证金清单"
+    assert parsed["ledger"][1]["cell_range"] == "A2:B2"
+
+
 def test_zip_bundle_parsing_keeps_nested_document_sources_and_skips_old_formats(tmp_path):
     nested = BytesIO()
     with zipfile.ZipFile(nested, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -288,20 +325,25 @@ def test_zip_bundle_parsing_keeps_nested_document_sources_and_skips_old_formats(
     package_doc.add_heading("结算审核包2", level=1)
     package_bytes = BytesIO()
     package_doc.save(package_bytes)
+    workbook = Workbook()
+    workbook.active["A1"] = "保证金清单"
+    spreadsheet_bytes = BytesIO()
+    workbook.save(spreadsheet_bytes)
     path = tmp_path / "bundle.zip"
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("main.docx", _docx_bytes())
         archive.writestr("nested.zip", nested.getvalue())
         archive.writestr("技术规范书.docx", package_bytes.getvalue())
+        archive.writestr("保证金清单.xlsx", spreadsheet_bytes.getvalue())
         archive.writestr("legacy.doc", b"legacy Word")
 
     parsed = parse_document(path, max_pages=100, ocr_enabled=False)
 
-    assert parsed["archive_stats"]["documents"] == 3
+    assert parsed["archive_stats"]["documents"] == 4
     assert parsed["scope_hint"] == "结算审核包2"
     assert len({block["block_id"] for block in parsed["blocks"]}) == len(parsed["blocks"])
     assert {block["source_file"].split("!/")[-1] for block in parsed["blocks"]} == {
-        "main.docx", "nested.docx", "技术规范书.docx"
+        "main.docx", "nested.docx", "技术规范书.docx", "保证金清单.xlsx"
     }
     assert any(item["kind"] == "doc" and item["state"] == "failed_review" for item in parsed["ledger"])
 

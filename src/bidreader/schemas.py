@@ -15,6 +15,8 @@ class Evidence(BaseModel):
     document_id: str
     source_file: str | None = None
     page_no: int | None = None
+    sheet_name: str | None = None
+    cell_range: str | None = None
     block_id: str
     quote: str
     bbox: list[float] | None = None
@@ -40,6 +42,8 @@ class ParsedBlock(BaseModel):
     cell_index: int | None = None
     cells: list[str] = Field(default_factory=list)
     source_file: str | None = None
+    sheet_name: str | None = None
+    cell_range: str | None = None
 
 
 class ProjectField(BaseModel):
