@@ -61,6 +61,7 @@ class Criterion(BaseModel):
     criterion_id: str
     category: str
     criterion_label: str | None = None
+    parent_label: str | None = None
     subcategory: str | None = None
     related_subcategories: list[str] = Field(default_factory=list)
     source_text: str

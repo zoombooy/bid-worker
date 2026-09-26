@@ -420,3 +420,24 @@ def test_upload_endpoint_persists_task_and_review_uses_history(tmp_path, monkeyp
         app.dependency_overrides.clear()
         Base.metadata.drop_all(test_engine)
         test_engine.dispose()
+
+
+def test_similar_project_rows_keep_parent_and_specific_work_type():
+    blocks = [
+        {"block_id": "b-heading", "kind": "paragraph", "text": "技术评分标准"},
+        {"block_id": "b-header", "kind": "table_row", "text": "序号 | 项目 | 评审内容及分值 | 项目内容 | 分值",
+         "cells": ["序号", "项目", "评审内容及分值", "项目内容", "分值"], "table_id": "t-1", "row_index": 0},
+        {"block_id": "b-1", "kind": "table_row", "text": "1 | 技术水平 | 相似工程业绩（30分） | 800kV及以上工程结算审核 | 每项得4分",
+         "cells": ["1", "技术水平", "相似工程业绩（30分）", "800kV及以上工程结算审核", "每项得4分"],
+         "table_id": "t-1", "row_index": 1},
+        {"block_id": "b-2", "kind": "table_row", "text": "2 | 技术水平 | 相似工程业绩（30分） | 500kV工程结算审核 | 每项得2分",
+         "cells": ["2", "技术水平", "相似工程业绩（30分）", "500kV工程结算审核", "每项得2分"],
+         "table_id": "t-1", "row_index": 2},
+    ]
+
+    criteria = extract_criteria(blocks, "doc-1")
+
+    assert [(item.parent_label, item.criterion_label, item.max_score) for item in criteria] == [
+        ("相似工程业绩（30分）", "800kV及以上工程结算审核", 4.0),
+        ("相似工程业绩（30分）", "500kV工程结算审核", 2.0),
+    ]

@@ -18,6 +18,14 @@ python -m uvicorn bidreader.app:app --app-dir src --host 127.0.0.1 --port 8000
 
 如要启用 OpenAI 兼容模型的评分条目辅助分类，配置 `LLM_BASE_URL`、`LLM_API_KEY` 和 `LLM_MODEL`。系统只应用可在候选原文中验证的类别判断，失败时保留规则结果。原文证据仍须人工确认。
 
+## Yuxi / MCP 集成
+
+服务提供 Streamable HTTP MCP endpoint：`/mcp`，由独立的 `bidreader-mcp` 进程提供。配置 `MCP_AUTH_TOKEN` 后，Yuxi 远程 MCP 请求必须带 `Authorization: Bearer <token>`。提供的只读工具为 `list_tenders`、`get_run_status`、`get_tender_analysis` 和 `search_tender_analysis`；分析工具保留原文证据字段，且明确要求 Agent 将结果作为待核候选。文件先通过本工作台/API 上传解析，再由 Yuxi 查询结构化结果；MCP 不把整份文件内容塞进模型上下文。
+
+部署时创建随机高强度 `MCP_AUTH_TOKEN` 并填入 `.env`。Yuxi 中添加远程 MCP：传输选择 `streamable_http`，URL 填 `http://bidreader-mcp:8001/mcp`（Compose 会将 MCP 服务加入 Yuxi 内部 Docker 网络），Headers 设置 `Authorization: Bearer <MCP_AUTH_TOKEN>`。连接测试应发现四个只读工具，再仅将其绑定到用于标书解析的 Agent。工作台 API 只绑定服务器回环地址 `127.0.0.1:18082`；本机访问可通过 `ssh -L 18082:127.0.0.1:18082 root@<server>` 建立隧道后打开 `http://127.0.0.1:18082`。
+
+如果 Yuxi API/Worker 配置了 HTTP 代理，将 `bidreader-mcp` 加入 `NO_PROXY` 与 `no_proxy`，否则内网 MCP 请求可能被代理转发。MCP 服务启用了 Host 校验，只允许 `bidreader-mcp:8001` 与本机测试地址。
+
 项目名称和项目编号候选使用了 [Inupedia/tender-extract](https://github.com/Inupedia/tender-extract) 的 MIT 许可增强规则和抽取引擎，并映射回本系统解析出的原文块。复用文件、上游 revision 和适配范围见 [第三方来源说明](src/bidreader/vendor/tender_extract/NOTICE.md)；上游 MIT License 随 vendored 代码保留。评分项抽取当前仍使用本项目的候选规则，后续将依据本地金标准评估决定接入哪些上游方法。
 
 扫描 PDF 默认尝试本机 OCR。安装 OCR 适配包：

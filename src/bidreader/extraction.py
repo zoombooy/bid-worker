@@ -404,7 +404,13 @@ def extract_criteria(blocks: list[dict], document_id: str, scope_hint: str | Non
             elif re.search(r"\(\s*-\d+(?:\.\d+)?\s*分", score_label):
                 max_score = 0.0
             criterion_label = cells[2] if len(cells) >= 3 else text
-            if re.search(r"工作组织及人员配备|人员配备|工作组|项目组", criterion_label):
+            parent_label = criterion_label if len(cells) >= 5 and _subcategory(criterion_label) == "similar_projects" else None
+            if parent_label and cells[3]:
+                criterion_label = cells[3]
+            if parent_label:
+                subcategory = "similar_projects"
+                related_subcategories = []
+            elif re.search(r"工作组织及人员配备|人员配备|工作组|项目组", criterion_label):
                 subcategory = "team_staffing"
                 related_subcategories = ["project_leader"] if re.search(r"项目负责人|项目经理", rubric) else []
             elif re.search(r"项目负责人|项目经理|技术负责人", criterion_label):
@@ -436,6 +442,7 @@ def extract_criteria(blocks: list[dict], document_id: str, scope_hint: str | Non
                 criterion_id=str(uuid4()),
                 category=category,
                 criterion_label=criterion_label,
+                parent_label=parent_label,
                 subcategory=subcategory,
                 related_subcategories=related_subcategories,
                 source_text=text,

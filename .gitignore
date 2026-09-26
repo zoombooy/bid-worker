@@ -1,10 +1,14 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.pytest-*/
+.uv-cache/
+.tmp/
 .ruff_cache/
 *.py[cod]
 .env
 data/
+*.egg-info/
 node_modules/
 dist/
 evaluation/samples/

@@ -1,7 +1,6 @@
 import hashlib
 import io
 import re
-import tempfile
 import zipfile
 from functools import lru_cache
 from pathlib import Path
@@ -297,9 +296,14 @@ def parse_pdf(path: Path, max_pages: int, *, ocr_enabled: bool = True, ocr_dpi: 
     return blocks, sections, pages, ledger
 
 
-def parse_text(path: Path) -> tuple[list[ParsedBlock], list[dict]]:
+def parse_text(path: Path | io.BytesIO, *, markdown: bool | None = None) -> tuple[list[ParsedBlock], list[dict]]:
     try:
-        text = path.read_text(encoding="utf-8-sig")
+        if isinstance(path, Path):
+            text = path.read_text(encoding="utf-8-sig")
+            is_markdown = path.suffix.lower() == ".md"
+        else:
+            text = path.read().decode("utf-8-sig")
+            is_markdown = bool(markdown)
     except UnicodeDecodeError as exc:
         raise ParseFailure("文本编码无法识别，请转换为 UTF-8 或上传 DOCX/PDF。") from exc
     blocks: list[ParsedBlock] = []
@@ -309,7 +313,7 @@ def parse_text(path: Path) -> tuple[list[ParsedBlock], list[dict]]:
         line = line.strip()
         if not line:
             continue
-        level = 1 if path.suffix.lower() == ".md" and line.startswith("#") else _heading_level("", line)
+        level = 1 if is_markdown and line.startswith("#") else _heading_level("", line)
         if level:
             title = line.lstrip("# ")
             stack = stack[: level - 1] + [title]
@@ -376,33 +380,29 @@ def _parse_archive(path: Path, max_pages: int, *, ocr_enabled: bool, ocr_dpi: in
                 counts["documents"] += 1
                 prefix = f"d-{counts['documents']:04d}-"
                 try:
-                    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
-                        temp_file.write(archive.read(info))
-                        temp_path = Path(temp_file.name)
-                    try:
-                        if suffix == ".docx":
-                            parsed_blocks, parsed_sections = parse_docx(temp_path)
-                            parsed_pages: list[dict] = []
-                            parsed_ledger = [{"object_id": b.block_id, "kind": b.kind, "state": "done", "reason": None} for b in parsed_blocks]
-                        elif suffix == ".xlsx":
-                            parsed_blocks, parsed_sections = parse_xlsx(temp_path)
-                            parsed_pages = []
-                            parsed_ledger = [{"object_id": b.block_id, "kind": b.kind, "state": "done", "reason": None,
-                                              "sheet_name": b.sheet_name, "cell_range": b.cell_range} for b in parsed_blocks]
-                        elif suffix == ".pdf":
-                            if temp_path.read_bytes()[:5] != b"%PDF-":
-                                raise ParseFailure("PDF 文件头无效。")
-                            parsed_blocks, parsed_sections, parsed_pages, parsed_ledger = parse_pdf(
-                                temp_path, max_pages, ocr_enabled=ocr_enabled, ocr_dpi=ocr_dpi
-                            )
-                        else:
-                            parsed_blocks, parsed_sections = parse_text(temp_path)
-                            parsed_pages = []
-                            parsed_ledger = [{"object_id": b.block_id, "kind": b.kind, "state": "done", "reason": None} for b in parsed_blocks]
-                        if not parsed_blocks:
-                            raise ParseFailure("文档没有可解析文字或结构。")
-                    finally:
-                        temp_path.unlink(missing_ok=True)
+                    content = archive.read(info)
+                    source = io.BytesIO(content)
+                    if suffix == ".docx":
+                        parsed_blocks, parsed_sections = parse_docx(source)
+                        parsed_pages: list[dict] = []
+                        parsed_ledger = [{"object_id": b.block_id, "kind": b.kind, "state": "done", "reason": None} for b in parsed_blocks]
+                    elif suffix == ".xlsx":
+                        parsed_blocks, parsed_sections = parse_xlsx(source)
+                        parsed_pages = []
+                        parsed_ledger = [{"object_id": b.block_id, "kind": b.kind, "state": "done", "reason": None,
+                                          "sheet_name": b.sheet_name, "cell_range": b.cell_range} for b in parsed_blocks]
+                    elif suffix == ".pdf":
+                        if content[:5] != b"%PDF-":
+                            raise ParseFailure("PDF 文件头无效。")
+                        parsed_blocks, parsed_sections, parsed_pages, parsed_ledger = parse_pdf(
+                            source, max_pages, ocr_enabled=ocr_enabled, ocr_dpi=ocr_dpi
+                        )
+                    else:
+                        parsed_blocks, parsed_sections = parse_text(source, markdown=suffix == ".md")
+                        parsed_pages = []
+                        parsed_ledger = [{"object_id": b.block_id, "kind": b.kind, "state": "done", "reason": None} for b in parsed_blocks]
+                    if not parsed_blocks:
+                        raise ParseFailure("文档没有可解析文字或结构。")
                     id_map = {block.block_id: f"{prefix}{block.block_id}" for block in parsed_blocks}
                     for block in parsed_blocks:
                         block.block_id = id_map[block.block_id]

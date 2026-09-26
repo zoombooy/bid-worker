@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = ""
     llm_timeout_seconds: int = 90
+    mcp_auth_token: str = ""
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     @property

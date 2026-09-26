@@ -1,0 +1,75 @@
+services:
+  bidreader:
+    build: .
+    image: bidreader:local
+    container_name: bidreader
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18082:8000"
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      DATABASE_URL: sqlite:////data/bidreader.db
+      MAX_UPLOAD_BYTES: "104857600"
+      LOCAL_OCR_ENABLED: "true"
+    volumes:
+      - bidreader-data:/data
+    networks:
+      yuxi_app-network:
+        aliases:
+          - bidreader
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=768m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  bidreader-mcp:
+    build: .
+    image: bidreader:local
+    container_name: bidreader-mcp
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      DATABASE_URL: sqlite:////data/bidreader.db
+    command: ["uvicorn", "bidreader.mcp_server:mcp_asgi_app", "--app-dir", "src", "--host", "0.0.0.0", "--port", "8001"]
+    depends_on:
+      bidreader:
+        condition: service_healthy
+    volumes:
+      - bidreader-data:/data
+    networks:
+      yuxi_app-network:
+        aliases:
+          - bidreader-mcp
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  bidreader-data:
+
+networks:
+  yuxi_app-network:
+    external: true
